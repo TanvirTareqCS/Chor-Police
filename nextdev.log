@@ -1,0 +1,12 @@
+▲ Next.js 16.4.0 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.105:3000
+- Environments: .env.local
+✓ Ready in 333ms
+✓ Running next.config.ts took 25ms
+- Cache Components enabled
+- Partial Prefetching enabled
+
+ GET /room/EJ7F51?playerId=p_1791839182838_raeapxs7f 200 in 578ms (next.js: 123ms, generate-params: 317ms, application-code: 138ms)
+ GET /room/EJ7F51?playerId=p_1791839241124_gxouwxhpp 200 in 35ms (next.js: 1.6ms, generate-params: 4ms, application-code: 30ms)
+ GET /room/EJ7F51?playerId=p_1791839212666_jk5fl100s 200 in 33ms (next.js: 1.4ms, generate-params: 3ms, application-code: 29ms)
