@@ -48,9 +48,9 @@ const db: Database = getDatabase(app);
  *
  *   ready/{PLAYER_ID}        boolean         "I've seen my chit" in "deal"
  *
- *   signals/{PLAYER_ID}/{MSG_ID}            transient WebRTC signaling for
- *     from        string                    on-seat video/audio (deleted by the
- *     description RTCSessionDescriptionInit  recipient as soon as consumed)
+ *   signals/{PLAYER_ID}/{MSG_ID}            transient WebRTC voice signaling
+ *     from        string                    (deleted by the recipient as soon
+ *     description RTCSessionDescriptionInit  as it is consumed)
  *     candidate   RTCIceCandidateInit
  *
  *   accused/{PLAYER_ID}      boolean         suspects ticked by Police

@@ -83,12 +83,14 @@ of any AI provider.
 - All players subscribe to the same `rooms/{roomId}` node, so state, chat, and
   accusations sync in real time.
 - The app tolerates legacy room data via a `normalizeRoom()` layer.
-- **On-seat video/voice** rides a peer-to-peer WebRTC mesh (`useRtc`), signaled
-  through the transient `rooms/{roomId}/signals/{playerId}` node. Each player
-  turns their own mic/camera on and off; streams render on that player's seat.
-  A free public STUN server is used by default — set the `NEXT_PUBLIC_TURN_*`
-  variables for friends behind strict NATs. Camera/mic require a secure context
-  (HTTPS or `localhost`).
+- **In-game voice** rides a peer-to-peer WebRTC mesh (`useVoice`), signaled
+  through the transient `rooms/{roomId}/signals/{playerId}` node. Media never
+  flows through Firebase — only the tiny SDP/ICE handshake. Each player turns
+  their own mic on and off, and a player's seat lights up with a live sound-wave
+  meter while they talk. A free public STUN server is used by default — set the
+  `NEXT_PUBLIC_TURN_*` variables for friends behind strict/symmetric NATs, which
+  is the usual reason two people cannot connect. Mic access requires a secure
+  context (HTTPS or `localhost`).
 
 ---
 

@@ -21,8 +21,6 @@ import {
   Trash2,
   Trophy,
   Users,
-  Video,
-  VideoOff,
   Volume2,
   VolumeX,
   XCircle,
@@ -69,9 +67,8 @@ import type {
 import { ChatBox } from "./ChatBox";
 import { PoliceConsole } from "./PoliceConsole";
 import { Confetti, FlashOverlay } from "./Celebration";
-import { SeatVideo } from "./SeatVideo";
 import { useBotEngine } from "@/hooks/useBotEngine";
-import { useRtc } from "@/hooks/useRtc";
+import { useVoice } from "@/hooks/useVoice";
 
 const BOT_NAMES = [
   "Rahim",
@@ -250,13 +247,13 @@ export function GameBoard() {
 
   useBotEngine({ room, roomId, enabled: isHost });
 
-  // On-seat peer-to-peer video/audio. Only other humans are peers; bots have none.
+  // On-seat peer-to-peer voice. Only other humans are peers; bots have none.
   const humanPeerIds = useMemo(
     () =>
       players.filter((p) => !p.isBot && p.id !== playerId).map((p) => p.id),
     [players, playerId]
   );
-  const rtc = useRtc({
+  const voice = useVoice({
     roomId,
     playerId,
     peerIds: humanPeerIds,
@@ -928,34 +925,22 @@ export function GameBoard() {
               </div>
             )}
             <button
-              onClick={() => rtc.setMic(!rtc.micOn)}
-              title={rtc.micOn ? "Mute microphone" : "Unmute microphone"}
-              className={`rounded-lg border p-2 ${
-                rtc.micOn
+              onClick={() => voice.setMic(!voice.micOn)}
+              title={voice.micOn ? "Mute microphone" : "Talk (turn mic on)"}
+              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                voice.micOn
                   ? "border-emerald-500/60 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-800/40"
                   : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"
               }`}
             >
-              {rtc.micOn ? (
+              {voice.micOn ? (
                 <Mic className="h-4 w-4" />
               ) : (
                 <MicOff className="h-4 w-4" />
               )}
-            </button>
-            <button
-              onClick={() => rtc.setCam(!rtc.camOn)}
-              title={rtc.camOn ? "Turn camera off" : "Turn camera on"}
-              className={`rounded-lg border p-2 ${
-                rtc.camOn
-                  ? "border-emerald-500/60 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-800/40"
-                  : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"
-              }`}
-            >
-              {rtc.camOn ? (
-                <Video className="h-4 w-4" />
-              ) : (
-                <VideoOff className="h-4 w-4" />
-              )}
+              <span className="hidden sm:inline">
+                {voice.micOn ? "Live" : "Talk"}
+              </span>
             </button>
             <button
               onClick={() => void copyInvite()}
@@ -988,9 +973,9 @@ export function GameBoard() {
           </div>
         </header>
 
-        {rtc.error && (
+        {voice.error && (
           <p className="mb-3 rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
-            {rtc.error}
+            {voice.error}
           </p>
         )}
 
@@ -1093,11 +1078,7 @@ export function GameBoard() {
                   const seatReady = room.phase === "deal" && !!room.ready?.[p.id];
                   const isAccused = room.phase === "chat" && !!room.accused?.[p.id];
                   const isSelf = p.id === playerId;
-                  const seatStream = isSelf
-                    ? rtc.localStream
-                    : rtc.remoteStreams[p.id] ?? null;
-                  const hasVideo =
-                    !!seatStream && seatStream.getVideoTracks().length > 0;
+                  const isSpeaking = !!voice.speaking[isSelf ? "self" : p.id];
                   return (
                     <div
                       key={p.id}
@@ -1106,37 +1087,46 @@ export function GameBoard() {
                     >
                       <div
                         className={`flex flex-col items-center rounded-xl border border-gray-700 bg-gray-900/95 p-1.5 text-center shadow-lg sm:p-2 ${
-                          p.id === playerId
-                            ? "ring-2 ring-red-500/80"
-                            : isAccused
-                              ? "animate-ring ring-2 ring-red-500/80"
-                              : policeSeat
-                                ? "animate-glow-blue ring-2 ring-blue-400/80"
-                                : ""
+                          isSpeaking
+                            ? "animate-speak-glow ring-2 ring-emerald-400/80"
+                            : p.id === playerId
+                              ? "ring-2 ring-red-500/80"
+                              : isAccused
+                                ? "animate-ring ring-2 ring-red-500/80"
+                                : policeSeat
+                                  ? "animate-glow-blue ring-2 ring-blue-400/80"
+                                  : ""
                         }`}
                       >
-                        <div className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-gray-700 text-base sm:h-9 sm:w-9 sm:text-lg md:h-10 md:w-10 md:text-xl">
-                          {seatStream && (
-                            <SeatVideo
-                              stream={seatStream}
-                              muted={isSelf}
-                              className={`absolute inset-0 h-full w-full object-cover ${
-                                hasVideo ? "" : "opacity-0"
-                              }`}
-                            />
+                        <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-gray-700 text-base sm:h-9 sm:w-9 sm:text-lg md:h-10 md:w-10 md:text-xl">
+                          {isSpeaking && (
+                            <span className="cp-speak-wave pointer-events-none absolute inset-0 rounded-full border-2 border-emerald-400" />
                           )}
-                          {!hasVideo &&
-                            (roleMeta ? (
-                              roleMeta.emoji
-                            ) : policeSeat ? (
-                              <Shield className="h-5 w-5 text-blue-400" />
-                            ) : (
-                              p.name.charAt(0).toUpperCase()
-                            ))}
+                          {roleMeta ? (
+                            roleMeta.emoji
+                          ) : policeSeat ? (
+                            <Shield className="h-5 w-5 text-blue-400" />
+                          ) : (
+                            p.name.charAt(0).toUpperCase()
+                          )}
                         </div>
                         <span className="mt-1 max-w-full truncate text-xs font-semibold text-gray-100">
                           {p.name}
                         </span>
+                        {isSpeaking && (
+                          <span className="mt-0.5 flex h-3 items-end gap-0.5">
+                            {[0, 1, 2, 3].map((bar) => (
+                              <span
+                                key={bar}
+                                className="cp-eq-bar w-0.5 rounded-sm bg-emerald-400"
+                                style={{
+                                  height: "100%",
+                                  animationDelay: `${bar * 120}ms`,
+                                }}
+                              />
+                            ))}
+                          </span>
+                        )}
                         <div className="mt-0.5 flex items-center gap-1 text-[10px]">
                           {p.isHost && <Crown className="h-3 w-3 text-yellow-400" />}
                           {p.isBot && (
