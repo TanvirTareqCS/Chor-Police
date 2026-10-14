@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -8,7 +8,10 @@ import {
   Check,
   CheckCircle2,
   Crown,
+  Link2,
   LogOut,
+  Mic,
+  MicOff,
   Play,
   Plus,
   RefreshCw,
@@ -18,9 +21,20 @@ import {
   Trash2,
   Trophy,
   Users,
+  Video,
+  VideoOff,
+  Volume2,
+  VolumeX,
   XCircle,
 } from "lucide-react";
 import { db, subscribeServerTimeOffset } from "@/lib/firebase";
+import {
+  getMutedSnapshot,
+  playSound,
+  setMuted,
+  subscribeMuted,
+  unlockAudio,
+} from "@/lib/sound";
 import {
   off,
   onValue,
@@ -54,7 +68,10 @@ import type {
 } from "@/types/game";
 import { ChatBox } from "./ChatBox";
 import { PoliceConsole } from "./PoliceConsole";
+import { Confetti, FlashOverlay } from "./Celebration";
+import { SeatVideo } from "./SeatVideo";
 import { useBotEngine } from "@/hooks/useBotEngine";
+import { useRtc } from "@/hooks/useRtc";
 
 const BOT_NAMES = [
   "Rahim",
@@ -70,6 +87,10 @@ const BOT_NAMES = [
 ];
 
 const CHAT_PHASES = ["chat"];
+
+const HOST_LEASE_MS = 14000;
+const HOST_LEASE_RENEW_MS = 5000;
+const HOST_LEASE_CHECK_MS = 4000;
 
 const DEFAULT_SETTINGS: RoomSettings = {
   maxPlayers: 6,
@@ -99,6 +120,7 @@ function normalizeRoom(raw: unknown): RoomState {
     badCount: r.badCount ?? 0,
     totalScores: r.totalScores ?? {},
     history: r.history ?? {},
+    hostLease: r.hostLease ?? null,
   };
 }
 
@@ -113,15 +135,53 @@ export function GameBoard() {
   const params = useParams();
   const searchParams = useSearchParams();
   const roomId = typeof params?.id === "string" ? params.id : undefined;
-  const playerId = searchParams.get("playerId") ?? undefined;
+  const queryPlayerId = searchParams.get("playerId") ?? undefined;
 
   const [room, setRoom] = useState<RoomState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [serverNow, setServerNow] = useState(() => Date.now());
+  const playerId = queryPlayerId;
+  const muted = useSyncExternalStore(
+    subscribeMuted,
+    getMutedSnapshot,
+    () => false
+  );
+  const [copied, setCopied] = useState(false);
 
   const offsetRef = useRef(0);
   const advancedKeyRef = useRef<string>("");
+
+  // Restore a player's seat from a previous visit (reconnect / refresh).
+  useEffect(() => {
+    if (queryPlayerId || !roomId) return;
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem(`cp_room_${roomId}`);
+    } catch {
+      stored = null;
+    }
+    if (stored) router.replace(`/room/${roomId}?playerId=${stored}`);
+  }, [queryPlayerId, roomId, router]);
+
+  useEffect(() => {
+    if (!roomId || !playerId) return;
+    try {
+      window.localStorage.setItem(`cp_room_${roomId}`, playerId);
+    } catch {
+      /* ignore */
+    }
+  }, [roomId, playerId]);
+
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   useEffect(() => {
     return subscribeServerTimeOffset((offset) => {
@@ -131,10 +191,9 @@ export function GameBoard() {
   }, []);
 
   useEffect(() => {
-    const interval = window.setInterval(
-      () => setServerNow(Date.now() + offsetRef.current),
-      1000
-    );
+    const interval = window.setInterval(() => {
+      setServerNow(Date.now() + offsetRef.current);
+    }, 1000);
     return () => window.clearInterval(interval);
   }, []);
 
@@ -168,7 +227,9 @@ export function GameBoard() {
     [players, playerId]
   );
   const playerCount = players.length;
-  const isHost = !!currentPlayer?.isHost;
+  const isHost =
+    !!currentPlayer &&
+    (currentPlayer.isHost || room?.hostId === currentPlayer.id);
   const role: PlayerRole | null = currentPlayer?.role ?? null;
   const isPolice = role === "Police" || room?.policeId === currentPlayer?.id;
   const policeName = room?.policeId
@@ -188,6 +249,77 @@ export function GameBoard() {
   }, [room, serverNow]);
 
   useBotEngine({ room, roomId, enabled: isHost });
+
+  // On-seat peer-to-peer video/audio. Only other humans are peers; bots have none.
+  const humanPeerIds = useMemo(
+    () =>
+      players.filter((p) => !p.isBot && p.id !== playerId).map((p) => p.id),
+    [players, playerId]
+  );
+  const rtc = useRtc({
+    roomId,
+    playerId,
+    peerIds: humanPeerIds,
+    enabled: !!roomId && !!playerId,
+  });
+
+  // Host lease — the host renews a lease so the room keeps moving even if the
+  // original host closes their tab. A stale lease lets another player take over.
+  const meId = currentPlayer?.id;
+  useEffect(() => {
+    if (!roomId || !meId || !isHost) return;
+    const leaseRef = dbRef(db, `rooms/${roomId}/hostLease`);
+    const renew = () => {
+      void set(leaseRef, {
+        ownerId: meId,
+        expiresAt: Date.now() + offsetRef.current + HOST_LEASE_MS,
+      });
+    };
+    renew();
+    const iv = window.setInterval(renew, HOST_LEASE_RENEW_MS);
+    return () => window.clearInterval(iv);
+  }, [roomId, meId, isHost]);
+
+  useEffect(() => {
+    if (!roomId || !meId || isHost) return;
+    const leaseRef = dbRef(db, `rooms/${roomId}/hostLease`);
+    const tryClaim = () => {
+      const lease = room?.hostLease;
+      const now = Date.now() + offsetRef.current;
+      // Only take over a lease that existed and has expired — never race the
+      // host while the room is still starting up.
+      if (!lease || lease.expiresAt > now) return;
+      const previousHostId = room?.hostId;
+      void runTransaction(leaseRef, (current) => {
+        const value = current as { expiresAt?: number } | null;
+        if (
+          value &&
+          typeof value.expiresAt === "number" &&
+          value.expiresAt > Date.now() + offsetRef.current + 1500
+        ) {
+          return;
+        }
+        return {
+          ownerId: meId,
+          expiresAt: Date.now() + offsetRef.current + HOST_LEASE_MS,
+        };
+      }).then((result) => {
+        if (!result.committed) return;
+        const claim = result.snapshot.val() as { ownerId?: string } | null;
+        if (claim?.ownerId !== meId) return;
+        const patch: Record<string, unknown> = {
+          hostId: meId,
+          [`players/${meId}/isHost`]: true,
+        };
+        if (previousHostId && previousHostId !== meId) {
+          patch[`players/${previousHostId}/isHost`] = false;
+        }
+        void update(dbRef(db, `rooms/${roomId}`), patch);
+      });
+    };
+    const iv = window.setInterval(tryClaim, HOST_LEASE_CHECK_MS);
+    return () => window.clearInterval(iv);
+  }, [roomId, meId, isHost, room?.hostLease, room?.hostId]);
 
   const beginRound = useCallback(
     async (round: number, resetScores: boolean) => {
@@ -227,6 +359,7 @@ export function GameBoard() {
 
   const finalizeRound = useCallback(async () => {
     if (!room || !roomId) return;
+    if (room.history?.[room.round]) return;
     const accusedIds = Object.entries(room.accused ?? {})
       .filter(([, value]) => value)
       .map(([id]) => id);
@@ -321,6 +454,124 @@ export function GameBoard() {
     if (!isHost || !room) return;
     if (room.phase === "chat" && room.accusationSubmitted) void advancePhase();
   }, [room, isHost, advancePhase]);
+
+  const prevPhaseKeyRef = useRef<string>("");
+  const lastWarnSecondRef = useRef<number | null>(null);
+  const accLockRef = useRef(false);
+  const chatCountRef = useRef(0);
+  const lastMsgSoundRef = useRef(0);
+  const endedSoundRef = useRef(false);
+
+  // Phase transition sounds + celebration bursts.
+  useEffect(() => {
+    if (!room) return;
+    const key = `${room.phase}:${room.round}`;
+    if (prevPhaseKeyRef.current === key) return;
+    prevPhaseKeyRef.current = key;
+
+    if (room.phase === "deal") {
+      playSound("deal");
+      if (role) window.setTimeout(() => playSound("reveal"), 420);
+    } else if (room.phase === "chat") {
+      playSound("start");
+      lastWarnSecondRef.current = null;
+      accLockRef.current = false;
+    } else if (room.phase === "results") {
+      const correct = room.history?.[room.round]?.correct ?? false;
+      playSound(correct ? "correct" : "wrong");
+    }
+  }, [room, role]);
+
+  // Countdown ticks in the final 10 seconds.
+  useEffect(() => {
+    if (!room || room.phase === "waiting" || room.phase === "ended") return;
+    if (timeLeft === null || timeLeft <= 0) return;
+    if (timeLeft > 10) {
+      lastWarnSecondRef.current = null;
+      return;
+    }
+    if (lastWarnSecondRef.current === timeLeft) return;
+    lastWarnSecondRef.current = timeLeft;
+    if (timeLeft === 10) {
+      playSound("warning");
+    } else if (timeLeft <= 5) {
+      playSound("tick");
+    }
+  }, [room, timeLeft]);
+
+  // Police siren when an accusation is locked in.
+  useEffect(() => {
+    if (!room || room.phase !== "chat") return;
+    if (room.accusationSubmitted && !accLockRef.current) {
+      accLockRef.current = true;
+      playSound("lock");
+    }
+  }, [room]);
+
+  // Soft blip for incoming chat messages.
+  useEffect(() => {
+    const total = chatMessages.length;
+    if (total <= chatCountRef.current) {
+      chatCountRef.current = total;
+      return;
+    }
+    chatCountRef.current = total;
+    if (!room || room.phase !== "chat") return;
+    const now = Date.now();
+    if (now - lastMsgSoundRef.current < 700) return;
+    lastMsgSoundRef.current = now;
+    playSound("message");
+  }, [chatMessages, room]);
+
+  // Final win / lose sting.
+  useEffect(() => {
+    if (!room || room.phase !== "ended" || endedSoundRef.current) return;
+    endedSoundRef.current = true;
+    const champ = players
+      .map((p) => ({ id: p.id, total: room.totalScores?.[p.id] ?? 0 }))
+      .sort((a, b) => b.total - a.total)[0];
+    playSound(champ?.id === playerId ? "win" : "lose");
+  }, [room, players, playerId]);
+
+  // Declarative celebration + flash overlays (pure — no state in effects).
+  const celebration = useMemo(() => {
+    if (!room) return null;
+    if (room.phase === "results" && room.history?.[room.round]?.correct) {
+      return { key: `res-${room.round}`, seed: room.round };
+    }
+    if (room.phase === "ended") {
+      const champ = players
+        .map((p) => ({ id: p.id, total: room.totalScores?.[p.id] ?? 0 }))
+        .sort((a, b) => b.total - a.total)[0];
+      if (champ?.id === playerId) {
+        return { key: `win-${room.round}`, seed: room.round + 100 };
+      }
+    }
+    return null;
+  }, [room, players, playerId]);
+
+  const flashDescriptor = useMemo(() => {
+    if (!room) return null;
+    if (room.phase === "chat" && room.accusationSubmitted) {
+      return { tone: "alarm" as const, key: `lock-${room.round}` };
+    }
+    if (room.phase === "results") {
+      const correct = room.history?.[room.round]?.correct ?? false;
+      return {
+        tone: correct ? ("good" as const) : ("bad" as const),
+        key: `res-${room.round}`,
+      };
+    }
+    if (
+      (room.phase === "chat" || room.phase === "deal") &&
+      timeLeft !== null &&
+      timeLeft <= 10 &&
+      timeLeft > 0
+    ) {
+      return { tone: "alarm" as const, key: `warn-${room.round}-${room.phase}` };
+    }
+    return null;
+  }, [room, timeLeft]);
 
   const nextBotName = useCallback(() => {
     const used = new Set(players.map((p) => p.name));
@@ -447,16 +698,58 @@ export function GameBoard() {
       return;
     }
     const remaining = players.filter((p) => p.id !== currentPlayer.id);
+    const remainingHumans = remaining.filter((p) => !p.isBot);
+
+    // No other human is left (nobody, or only bots) — tear the room down.
+    if (remainingHumans.length === 0) {
+      await remove(dbRef(db, `rooms/${roomId}`));
+      try {
+        window.localStorage.removeItem(`cp_room_${roomId}`);
+      } catch {
+        /* ignore */
+      }
+      router.push("/");
+      return;
+    }
+
     const updates: Record<string, unknown> = {
       [`players/${currentPlayer.id}/status`]: "left",
+      [`players/${currentPlayer.id}/isHost`]: false,
     };
-    if (currentPlayer.isHost && remaining.length > 0) {
-      updates.hostId = remaining[0].id;
-      updates[`players/${remaining[0].id}/isHost`] = true;
+    if (isHost) {
+      const heir = remainingHumans[0] ?? remaining[0];
+      updates.hostId = heir.id;
+      updates[`players/${heir.id}/isHost`] = true;
     }
     await update(dbRef(db, `rooms/${roomId}`), updates);
+    try {
+      window.localStorage.removeItem(`cp_room_${roomId}`);
+    } catch {
+      /* ignore */
+    }
     router.push("/");
-  }, [room, roomId, currentPlayer, players, router]);
+  }, [room, roomId, currentPlayer, players, router, isHost]);
+
+  const toggleMute = useCallback(() => {
+    const next = !getMutedSnapshot();
+    setMuted(next);
+    if (!next) {
+      unlockAudio();
+      playSound("join");
+    }
+  }, []);
+
+  const copyInvite = useCallback(async () => {
+    if (!roomId) return;
+    const url = `${window.location.origin}/?room=${roomId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      /* clipboard unavailable */
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }, [roomId]);
 
   if (!roomId) {
     return (
@@ -591,6 +884,10 @@ export function GameBoard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-3 text-white md:p-4">
+      {flashDescriptor && (
+        <FlashOverlay tone={flashDescriptor.tone} trigger={flashDescriptor.key} />
+      )}
+      {celebration && <Confetti key={celebration.key} seed={celebration.seed} />}
       <div className="mx-auto max-w-7xl">
         <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -605,13 +902,82 @@ export function GameBoard() {
           </div>
           <div className="flex items-center gap-3">
             {timeLeft !== null && (
-              <div className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-4 py-2">
-                <Timer className="h-5 w-5 text-yellow-400" />
-                <span className="text-xl font-bold text-yellow-400">
+              <div
+                className={`flex items-center gap-2 rounded-lg border bg-gray-800 px-4 py-2 ${
+                  timeLeft <= 10 && room.phase !== "ended"
+                    ? "animate-danger border-red-500/60"
+                    : "border-gray-700"
+                }`}
+              >
+                <Timer
+                  className={`h-5 w-5 ${
+                    timeLeft <= 10 && room.phase !== "ended"
+                      ? "text-red-400"
+                      : "text-yellow-400"
+                  }`}
+                />
+                <span
+                  className={`text-xl font-bold ${
+                    timeLeft <= 10 && room.phase !== "ended"
+                      ? "text-red-400"
+                      : "text-yellow-400"
+                  }`}
+                >
                   {formatSeconds(timeLeft)}
                 </span>
               </div>
             )}
+            <button
+              onClick={() => rtc.setMic(!rtc.micOn)}
+              title={rtc.micOn ? "Mute microphone" : "Unmute microphone"}
+              className={`rounded-lg border p-2 ${
+                rtc.micOn
+                  ? "border-emerald-500/60 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-800/40"
+                  : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              {rtc.micOn ? (
+                <Mic className="h-4 w-4" />
+              ) : (
+                <MicOff className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              onClick={() => rtc.setCam(!rtc.camOn)}
+              title={rtc.camOn ? "Turn camera off" : "Turn camera on"}
+              className={`rounded-lg border p-2 ${
+                rtc.camOn
+                  ? "border-emerald-500/60 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-800/40"
+                  : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              {rtc.camOn ? (
+                <Video className="h-4 w-4" />
+              ) : (
+                <VideoOff className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              onClick={() => void copyInvite()}
+              title="Copy invite link"
+              className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700"
+            >
+              <Link2 className="h-4 w-4" />
+              <span className="hidden sm:inline">
+                {copied ? "Copied!" : "Invite"}
+              </span>
+            </button>
+            <button
+              onClick={toggleMute}
+              title={muted ? "Unmute" : "Mute"}
+              className="rounded-lg border border-gray-700 bg-gray-800 p-2 text-gray-300 hover:bg-gray-700"
+            >
+              {muted ? (
+                <VolumeX className="h-4 w-4" />
+              ) : (
+                <Volume2 className="h-4 w-4" />
+              )}
+            </button>
             <button
               onClick={() => void leaveRoom()}
               title="Leave room"
@@ -621,6 +987,12 @@ export function GameBoard() {
             </button>
           </div>
         </header>
+
+        {rtc.error && (
+          <p className="mb-3 rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+            {rtc.error}
+          </p>
+        )}
 
         <div
           className={`mb-4 flex flex-col gap-1 rounded-xl border px-4 py-3 ${banner.cls}`}
@@ -634,7 +1006,8 @@ export function GameBoard() {
 
         {meta && (
           <div
-            className={`mb-4 rounded-2xl border-2 p-4 md:p-5 ${meta.accent}`}
+            key={`${room.round}-${role}`}
+            className={`animate-flip mb-4 rounded-2xl border-2 p-4 md:p-5 ${meta.accent}`}
           >
             <div className="flex items-center gap-4">
               <span className="shrink-0 text-4xl md:text-5xl">{meta.emoji}</span>
@@ -718,6 +1091,13 @@ export function GameBoard() {
                     showRole && p.role ? ROLE_META[p.role] : null;
                   const policeSeat = room.policeId === p.id;
                   const seatReady = room.phase === "deal" && !!room.ready?.[p.id];
+                  const isAccused = room.phase === "chat" && !!room.accused?.[p.id];
+                  const isSelf = p.id === playerId;
+                  const seatStream = isSelf
+                    ? rtc.localStream
+                    : rtc.remoteStreams[p.id] ?? null;
+                  const hasVideo =
+                    !!seatStream && seatStream.getVideoTracks().length > 0;
                   return (
                     <div
                       key={p.id}
@@ -728,19 +1108,31 @@ export function GameBoard() {
                         className={`flex flex-col items-center rounded-xl border border-gray-700 bg-gray-900/95 p-1.5 text-center shadow-lg sm:p-2 ${
                           p.id === playerId
                             ? "ring-2 ring-red-500/80"
-                            : policeSeat
-                              ? "ring-2 ring-blue-400/80"
-                              : ""
+                            : isAccused
+                              ? "animate-ring ring-2 ring-red-500/80"
+                              : policeSeat
+                                ? "animate-glow-blue ring-2 ring-blue-400/80"
+                                : ""
                         }`}
                       >
-                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-700 text-base sm:h-9 sm:w-9 sm:text-lg md:h-10 md:w-10 md:text-xl">
-                          {roleMeta ? (
-                            roleMeta.emoji
-                          ) : policeSeat ? (
-                            <Shield className="h-5 w-5 text-blue-400" />
-                          ) : (
-                            p.name.charAt(0).toUpperCase()
+                        <div className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-gray-700 text-base sm:h-9 sm:w-9 sm:text-lg md:h-10 md:w-10 md:text-xl">
+                          {seatStream && (
+                            <SeatVideo
+                              stream={seatStream}
+                              muted={isSelf}
+                              className={`absolute inset-0 h-full w-full object-cover ${
+                                hasVideo ? "" : "opacity-0"
+                              }`}
+                            />
                           )}
+                          {!hasVideo &&
+                            (roleMeta ? (
+                              roleMeta.emoji
+                            ) : policeSeat ? (
+                              <Shield className="h-5 w-5 text-blue-400" />
+                            ) : (
+                              p.name.charAt(0).toUpperCase()
+                            ))}
                         </div>
                         <span className="mt-1 max-w-full truncate text-xs font-semibold text-gray-100">
                           {p.name}

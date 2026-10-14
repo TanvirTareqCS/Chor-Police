@@ -41,6 +41,11 @@ export interface PhaseTimers {
   chat: number;
 }
 
+export interface HostLease {
+  ownerId: string;
+  expiresAt: number;
+}
+
 export interface RoomSettings {
   maxPlayers: number;
   badChitCount: number;
@@ -81,6 +86,7 @@ export interface RoomState {
   results: Record<string, number> | null;
   totalScores: Record<string, number>;
   history: Record<string, RoundRecord>;
+  hostLease?: HostLease | null;
 }
 
 export interface RoleMeta {

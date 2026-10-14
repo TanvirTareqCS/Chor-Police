@@ -1,17 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { ref, set, get } from "firebase/database";
 import { generateRoomCode, getBadChitRange, makeId } from "@/lib/gameLogic";
 
 export function RoomLobby() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [playerName, setPlayerName] = useState("");
-  const [roomCode, setRoomCode] = useState("");
+  const [roomCode, setRoomCode] = useState(
+    () => (searchParams.get("room") ?? "").toUpperCase()
+  );
   const [maxPlayers, setMaxPlayers] = useState(6);
   const [badChitCount, setBadChitCount] = useState(2);
+  const [roundCount, setRoundCount] = useState(5);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,6 +34,7 @@ export function RoomLobby() {
       const clampedMax = Math.max(4, Math.min(8, maxPlayers));
       const { min: minBad, max: maxBad } = getBadChitRange(clampedMax);
       const clampedBad = Math.max(minBad, Math.min(badChitCount, maxBad));
+      const clampedRounds = Math.max(5, Math.min(20, roundCount));
       await set(ref(db, `rooms/${roomId}`), {
         roomId,
         hostId: playerId,
@@ -41,7 +46,7 @@ export function RoomLobby() {
         settings: {
           maxPlayers: clampedMax,
           badChitCount: clampedBad,
-          roundCount: 5,
+          roundCount: clampedRounds,
           phaseTimers: { deal: 30, chat: 180 },
         },
         players: {
@@ -67,6 +72,11 @@ export function RoomLobby() {
         totalScores: {},
         history: {},
       });
+      try {
+        window.localStorage.setItem(`cp_room_${roomId}`, playerId);
+      } catch {
+        /* ignore */
+      }
       router.push(`/room/${roomId}?playerId=${playerId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create room");
@@ -130,6 +140,11 @@ export function RoomLobby() {
         status: "active",
         joinedAt: Date.now(),
       });
+      try {
+        window.localStorage.setItem(`cp_room_${code}`, playerId);
+      } catch {
+        /* ignore */
+      }
       router.push(`/room/${code}?playerId=${playerId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to join room");
@@ -206,6 +221,23 @@ export function RoomLobby() {
               <p className="mt-1 text-xs text-gray-500">
                 Every seat gets a real chit — no blanks. Babu and Police are
                 always dealt; extra seats become Bad Chits.
+              </p>
+            </div>
+            <div className="mb-4">
+              <label className="mb-2 block text-sm font-medium text-gray-300">
+                Rounds (5 - 20)
+              </label>
+              <input
+                type="number"
+                min={5}
+                max={20}
+                value={roundCount}
+                onChange={(e) => setRoundCount(Number(e.target.value) || 5)}
+                onBlur={() => setRoundCount((v) => Math.max(5, Math.min(20, v)))}
+                className="w-full rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                How many rounds the game runs for. Default is 5.
               </p>
             </div>
             <button

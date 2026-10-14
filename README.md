@@ -2,7 +2,7 @@
 
 A 4–8 player, room-based social deduction game for the browser. Deal secret
 chits, bluff your way through a live interrogation, and watch the Police hunt
-the Bad Chits across five rounds. Everyone plays for themselves.
+the Bad Chits across several rounds. Everyone plays for themselves.
 
 Built with **Next.js 16** (App Router), **React 19**, **Tailwind CSS v4**, and
 **Firebase Realtime Database**, with optional **AI-driven bot players** powered
@@ -16,7 +16,8 @@ by an LLM provider (Groq / OpenAI / Google).
 2. The host adds bots (optional) and starts the game with 4–8 players.
 3. Each player secretly receives one chit. The **Police** is always revealed
    publicly; everyone else's chit stays hidden until the payout.
-4. Play out the round, then repeat for **5 rounds**. Highest total score wins.
+4. Play out the round, then repeat for the configured number of rounds
+   (5–20). Highest total score wins.
 
 ### Rounds & Phases
 
@@ -82,6 +83,12 @@ of any AI provider.
 - All players subscribe to the same `rooms/{roomId}` node, so state, chat, and
   accusations sync in real time.
 - The app tolerates legacy room data via a `normalizeRoom()` layer.
+- **On-seat video/voice** rides a peer-to-peer WebRTC mesh (`useRtc`), signaled
+  through the transient `rooms/{roomId}/signals/{playerId}` node. Each player
+  turns their own mic/camera on and off; streams render on that player's seat.
+  A free public STUN server is used by default — set the `NEXT_PUBLIC_TURN_*`
+  variables for friends behind strict NATs. Camera/mic require a secure context
+  (HTTPS or `localhost`).
 
 ---
 
@@ -111,6 +118,11 @@ NEXT_PUBLIC_FIREBASE_APP_ID=
 AI_PROVIDER=groq          # groq | openai | gemini
 AI_MODEL=llama-3.3-70b-versatile
 AI_API_KEY=
+
+# Optional TURN server for WebRTC behind strict NATs (public STUN is built in)
+NEXT_PUBLIC_TURN_URL=
+NEXT_PUBLIC_TURN_USERNAME=
+NEXT_PUBLIC_TURN_CREDENTIAL=
 ```
 
 > **Firebase:** create a project, enable **Realtime Database**, and copy the web

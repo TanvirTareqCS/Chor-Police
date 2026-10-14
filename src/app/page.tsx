@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { RoomLobby } from "@/components/RoomLobby";
 
 export default function Home() {
@@ -14,10 +15,12 @@ export default function Home() {
           <p className="mx-auto mt-3 max-w-2xl text-gray-400">
             A 4-8 player, room-based social deduction game. Deal the chits,
             argue your case in the interrogation, and let the Police hunt the
-            Bad Chits across five rounds. Everyone for themselves.
+            Bad Chits across 5-20 rounds. Everyone for themselves.
           </p>
         </header>
-        <RoomLobby />
+        <Suspense fallback={null}>
+          <RoomLobby />
+        </Suspense>
         <section className="mx-auto mt-10 max-w-4xl rounded-xl border border-gray-800 bg-gray-900/40 p-6 text-sm text-gray-400">
           <h3 className="mb-3 text-base font-semibold text-gray-200">
             How to play

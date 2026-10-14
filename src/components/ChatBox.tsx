@@ -62,7 +62,7 @@ export function ChatBox({
           return (
             <div
               key={m.id}
-              className={`rounded-lg p-2 ${
+              className={`animate-slide-in rounded-lg p-2 ${
                 mine ? "bg-blue-900/40" : "bg-gray-900/60"
               }`}
             >

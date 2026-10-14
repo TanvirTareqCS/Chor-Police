@@ -24,3 +24,191 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ------------------------------------------------------------------ */
+/* Chor Police — game feel animations                                  */
+/* ------------------------------------------------------------------ */
+
+@keyframes cp-flip {
+  from {
+    transform: perspective(900px) rotateY(90deg) scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: perspective(900px) rotateY(0deg) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes cp-pop {
+  0% {
+    transform: scale(0.82);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes cp-shake {
+  10%,
+  90% {
+    transform: translateX(-2px);
+  }
+  20%,
+  80% {
+    transform: translateX(4px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-7px);
+  }
+  40%,
+  60% {
+    transform: translateX(7px);
+  }
+}
+
+@keyframes cp-flash {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes cp-slide-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes cp-float-up {
+  from {
+    transform: translateY(0) scale(0.8);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-70px) scale(1.3);
+    opacity: 0;
+  }
+}
+
+@keyframes cp-confetti {
+  to {
+    transform: translateY(105vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+@keyframes cp-danger {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    border-color: rgba(239, 68, 68, 0.9);
+  }
+}
+
+@keyframes cp-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+}
+
+@keyframes cp-glow-blue {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px 2px rgba(59, 130, 246, 0.55);
+  }
+}
+
+.animate-flip {
+  animation: cp-flip 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-pop {
+  animation: cp-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-shake {
+  animation: cp-shake 0.55s both;
+}
+
+.animate-slide-in {
+  animation: cp-slide-in 0.25s ease-out both;
+}
+
+.animate-float-up {
+  animation: cp-float-up 1.1s ease-out both;
+}
+
+.animate-danger {
+  animation: cp-danger 1s ease-in-out infinite;
+}
+
+.animate-ring {
+  animation: cp-ring 1s ease-out infinite;
+}
+
+.animate-glow-blue {
+  animation: cp-glow-blue 1.6s ease-in-out infinite;
+}
+
+.cp-flash-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  animation: cp-flash 0.9s ease-out forwards;
+}
+
+.cp-confetti-piece {
+  position: absolute;
+  top: -12px;
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
+  animation: cp-confetti linear forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-flip,
+  .animate-pop,
+  .animate-shake,
+  .animate-slide-in,
+  .animate-float-up,
+  .animate-danger,
+  .animate-ring,
+  .animate-glow-blue,
+  .cp-flash-overlay,
+  .cp-confetti-piece {
+    animation: none !important;
+  }
+}
